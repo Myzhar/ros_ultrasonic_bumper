@@ -72,6 +72,8 @@ add_executable(
     ultrasonic_bumper_node
     ${ULTRASND_HDR}
     ${ULTRASND_SRC}
+    ${MSG}
+    ${LAUNCH}
 )
 
 target_link_libraries(
