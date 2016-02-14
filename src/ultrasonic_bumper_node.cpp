@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string>
 
+#include <ros_ultrasonic_bumper/ultrasnd_bump_ranges.h>
+
 using namespace std;
 
 
@@ -17,6 +19,7 @@ ros::NodeHandle* nhPriv;
 string serial_port;
 int baudrate;
 int timeout_msec;
+
 // <<<<< Global variables
 
 #define DEFAULT_SER_PORT    "/dev/ttyUSB0"

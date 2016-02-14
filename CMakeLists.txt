@@ -52,6 +52,19 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   serial
   std_msgs
+  message_generation
+  sensor_msgs
+)
+
+add_message_files(
+  FILES
+  ultrasnd_bump_ranges.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+  sensor_msgs
 )
 
 catkin_package(
