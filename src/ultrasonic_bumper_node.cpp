@@ -158,7 +158,7 @@ int main(int argc, char** argv)
             memcpy( (char*)&received, ser_buffer.data(), sizeof(DataOut) );
 
             // >>>>> Terminator is correct? [0x0d0a]
-            if( received.ctrl_frame_1 != /*0x0d0a*/0x4bb4 )
+            if( received.ctrl_frame_1 != 0x0d0a )
             {
                 ROS_DEBUG_STREAM( "Bad data!!!" );
 
@@ -186,19 +186,19 @@ int main(int argc, char** argv)
             if( received.distances[0] != received.not_valid_val )
                 rangeMsg.sensor_FL.range = received.distances[0];
             else
-                rangeMsg.sensor_FL.range = 10.0;
+                rangeMsg.sensor_FL.range = 4.0;
             if( received.distances[1] != received.not_valid_val )
                 rangeMsg.sensor_FR.range = received.distances[1];
             else
-                rangeMsg.sensor_FR.range = 10.0;
+                rangeMsg.sensor_FR.range = 4.0;
             if( received.distances[2] != received.not_valid_val )
                 rangeMsg.sensor_RR.range = received.distances[2];
             else
-                rangeMsg.sensor_RR.range = 10.0;
+                rangeMsg.sensor_RR.range = 4.0;
             if( received.distances[3] != received.not_valid_val )
                 rangeMsg.sensor_RL.range = received.distances[3];
             else
-                rangeMsg.sensor_RL.range = 10.0;
+                rangeMsg.sensor_RL.range = 4.0;
 
             range_pub.publish( rangeMsg );
             // <<<<< Output message
