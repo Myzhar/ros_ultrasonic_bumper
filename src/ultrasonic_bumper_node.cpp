@@ -126,7 +126,6 @@ int main(int argc, char** argv)
             {
                 ctrl0_0 = ser_buffer.at(i);
                 if( ctrl0_0 != 0xa5 )
-                    //out.remove(0,1);
                     ser_buffer.erase( ser_buffer.begin(),
                                       ser_buffer.begin()+1 );
                 else
@@ -137,7 +136,10 @@ int main(int argc, char** argv)
             }
 
             if(!found)
+            {
+                ROS_DEBUG_STREAM( "Sync [0xa5] not found" );
                 continue;
+            }
             // <<<<< Searching for first byte: 0xA5
 
             // >>>>> Data received is complete?
@@ -232,7 +234,7 @@ void loadParams()
         ROS_INFO_STREAM( "baudrate: " << " not present. Default value set: " << baudrate );
     }
     else
-        ROS_DEBUG_STREAM( "baudrate: " << timeout_msec );
+        ROS_DEBUG_STREAM( "baudrate: " << baudrate );
 
     if( !nhPriv->getParam( "timeout_msec", timeout_msec ) )
     {
