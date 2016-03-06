@@ -10,6 +10,8 @@ using namespace ros_ultrasonic_bumper;
 
 #define MAX_SONAR 4
 
+#define INVALID_REMAP 4.0f
+
 typedef struct _data_out
 {
     uint16_t ctrl_frame_0;        // 0x5AA5
@@ -34,6 +36,7 @@ string serial_port;
 int baudrate;
 int timeout_msec;
 
+bool simul;
 // <<<<< Global variables
 
 #define DEFAULT_SER_PORT    "/dev/ttyUSB0"
@@ -51,10 +54,10 @@ int main(int argc, char** argv)
     nh = new ros::NodeHandle(); // Node
     nhPriv = new ros::NodeHandle( "~" ); // Private node to load parameters
 
-    if( ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug) )
+    /*if( ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug) )
     {
         ros::console::notifyLoggerLevelsChanged();
-    }
+    }*/
 
     // Load parameters from param server
     loadParams();
@@ -82,29 +85,32 @@ int main(int argc, char** argv)
     // >>>>> Serial driver
     serial::Serial serial;
 
-    try
+    if( !simul )
     {
-        serial.setPort(serial_port);
-        serial.open();
-
-        if(serial.isOpen()){
-            ROS_INFO_STREAM("Serial Port initialized: " << serial_port );
-        }
-        else
+        try
         {
-            ROS_ERROR_STREAM( "Serial port not opened: " << serial_port );
+            serial.setPort(serial_port);
+            serial.open();
+
+            if(serial.isOpen()){
+                ROS_INFO_STREAM("Serial Port initialized: " << serial_port );
+            }
+            else
+            {
+                ROS_ERROR_STREAM( "Serial port not opened: " << serial_port );
+                return EXIT_FAILURE;
+            }
+
+            serial.setBaudrate(baudrate);
+
+            serial::Timeout to = serial::Timeout::simpleTimeout(timeout_msec);
+            serial.setTimeout(to);
+        }
+        catch (serial::IOException& e)
+        {
+            ROS_ERROR_STREAM("Unable to configure serial port " << serial_port << " - Error: "  << e.what() );
             return EXIT_FAILURE;
         }
-
-        serial.setBaudrate(baudrate);
-
-        serial::Timeout to = serial::Timeout::simpleTimeout(timeout_msec);
-        serial.setTimeout(to);
-    }
-    catch (serial::IOException& e)
-    {
-        ROS_ERROR_STREAM("Unable to configure serial port " << serial_port << " - Error: "  << e.what() );
-        return EXIT_FAILURE;
     }
 
     string ser_buffer;
@@ -115,98 +121,111 @@ int main(int argc, char** argv)
 
     while( ros::ok() )
     {
-        if( serial.waitReadable() )
+        if( !simul )
         {
-            int available = serial.available();
-            ser_buffer += serial.read( available );
-
-            // >>>>> Searching for first byte: 0xA5
-            bool found = false;
-            for( int i=0; i<ser_buffer.size(); i++ )
+            if( serial.waitReadable() )
             {
-                ctrl0_0 = ser_buffer.at(i);
-                if( ctrl0_0 != 0xa5 )
-                    ser_buffer.erase( ser_buffer.begin(),
-                                      ser_buffer.begin()+1 );
-                else
+                int available = serial.available();
+                ser_buffer += serial.read( available );
+
+                // >>>>> Searching for first byte: 0xA5
+                bool found = false;
+                for( int i=0; i<ser_buffer.size(); i++ )
                 {
-                    found = true;
-                    break;
+                    ctrl0_0 = ser_buffer.at(i);
+                    if( ctrl0_0 != 0xa5 )
+                        ser_buffer.erase( ser_buffer.begin(),
+                                          ser_buffer.begin()+1 );
+                    else
+                    {
+                        found = true;
+                        break;
+                    }
                 }
-            }
 
-            if(!found)
-            {
-                ROS_DEBUG_STREAM( "Sync [0xa5] not found" );
-                continue;
-            }
-            // <<<<< Searching for first byte: 0xA5
+                if(!found)
+                {
+                    ROS_DEBUG_STREAM( "Sync [0xa5] not found" );
+                    continue;
+                }
+                // <<<<< Searching for first byte: 0xA5
 
-            // >>>>> Data received is complete?
-            if( ser_buffer.size()<sizeof(DataOut) )
-            {
-                ROS_DEBUG_STREAM( "Data incomplete" );
-                continue;
-            }
-            // <<<<< Data received is complete?
+                // >>>>> Data received is complete?
+                if( ser_buffer.size()<sizeof(DataOut) )
+                {
+                    ROS_DEBUG_STREAM( "Data incomplete" );
+                    continue;
+                }
+                // <<<<< Data received is complete?
 
-            // >>>>> Second byte is correct? [0x5A]
-            ctrl0_1 = ser_buffer.at(1);
-            if( ctrl0_1 != 0x5a )
-                continue;
-            // <<<<< Second byte is correct? [0x5A]
+                // >>>>> Second byte is correct? [0x5A]
+                ctrl0_1 = ser_buffer.at(1);
+                if( ctrl0_1 != 0x5a )
+                    continue;
+                // <<<<< Second byte is correct? [0x5A]
 
-            // Data copy
-            memcpy( (char*)&received, ser_buffer.data(), sizeof(DataOut) );
+                // Data copy
+                memcpy( (char*)&received, ser_buffer.data(), sizeof(DataOut) );
 
-            // >>>>> Terminator is correct? [0x0d0a]
-            if( received.ctrl_frame_1 != 0x0d0a )
-            {
-                ROS_DEBUG_STREAM( "Bad data!!!" );
+                // >>>>> Terminator is correct? [0x0d0a]
+                if( received.ctrl_frame_1 != 0x0d0a )
+                {
+                    ROS_DEBUG_STREAM( "Bad data!!!" );
 
-                // If the terminator is not correct I remove only the Synchronizing
-                // word [0x5AA5] because it was a false beginning.
-                // The next cycle I start searching for first byte [0xA5] again
+                    // If the terminator is not correct I remove only the Synchronizing
+                    // word [0x5AA5] because it was a false beginning.
+                    // The next cycle I start searching for first byte [0xA5] again
 
+                    ser_buffer.erase( ser_buffer.begin(),
+                                      ser_buffer.begin()+2 );
+                    continue;
+                }
+                // <<<<< Terminator is correct? [0x0d0a]
+
+                // Removing processed data
                 ser_buffer.erase( ser_buffer.begin(),
-                                  ser_buffer.begin()+2 );
-                continue;
+                                  ser_buffer.begin()+ sizeof(DataOut) );
             }
-            // <<<<< Terminator is correct? [0x0d0a]
-
-            // Removing processed data
-            ser_buffer.erase( ser_buffer.begin(),
-                              ser_buffer.begin()+ sizeof(DataOut) );
-
-            // >>>>> Output message
-            ros::Time now = ros::Time::now();
-            rangeMsg.sensor_FL.header.stamp = now;
-            rangeMsg.sensor_FR.header.stamp = now;
-            rangeMsg.sensor_RR.header.stamp = now;
-            rangeMsg.sensor_RL.header.stamp = now;
-
-            if( received.distances[0] != received.not_valid_val )
-                rangeMsg.sensor_FL.range = received.distances[0];
-            else
-                rangeMsg.sensor_FL.range = 4.0;
-            if( received.distances[1] != received.not_valid_val )
-                rangeMsg.sensor_FR.range = received.distances[1];
-            else
-                rangeMsg.sensor_FR.range = 4.0;
-            if( received.distances[2] != received.not_valid_val )
-                rangeMsg.sensor_RR.range = received.distances[2];
-            else
-                rangeMsg.sensor_RR.range = 4.0;
-            if( received.distances[3] != received.not_valid_val )
-                rangeMsg.sensor_RL.range = received.distances[3];
-            else
-                rangeMsg.sensor_RL.range = 4.0;
-
-            range_pub.publish( rangeMsg );
-            // <<<<< Output message
+        }
+        else // Data simulation
+        {
+            received.distances[0] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+            received.distances[1] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+            received.distances[2] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+            received.distances[3] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
         }
 
+        // >>>>> Output message
+        ros::Time now = ros::Time::now();
+        rangeMsg.sensor_FL.header.stamp = now;
+        rangeMsg.sensor_FR.header.stamp = now;
+        rangeMsg.sensor_RR.header.stamp = now;
+        rangeMsg.sensor_RL.header.stamp = now;
+
+        if( received.distances[0] != received.not_valid_val )
+            rangeMsg.sensor_FL.range = received.distances[0];
+        else
+            rangeMsg.sensor_FL.range = INVALID_REMAP;
+        if( received.distances[1] != received.not_valid_val )
+            rangeMsg.sensor_FR.range = received.distances[1];
+        else
+            rangeMsg.sensor_FR.range = INVALID_REMAP;
+        if( received.distances[2] != received.not_valid_val )
+            rangeMsg.sensor_RR.range = received.distances[2];
+        else
+            rangeMsg.sensor_RR.range = INVALID_REMAP;
+        if( received.distances[3] != received.not_valid_val )
+            rangeMsg.sensor_RL.range = received.distances[3];
+        else
+            rangeMsg.sensor_RL.range = INVALID_REMAP;
+
+        range_pub.publish( rangeMsg );
+        // <<<<< Output message
+
         ros::spinOnce();
+
+        ros::Rate r(100); // 10 hz
+        r.sleep();
     }
 
     ROS_INFO_STREAM("... stopped!");
@@ -244,4 +263,13 @@ void loadParams()
     }
     else
         ROS_DEBUG_STREAM( "timeout_msec " << timeout_msec );
+
+    if( !nhPriv->getParam( "simul", simul ) )
+    {
+        simul = false;
+        nhPriv->setParam( "simul", simul );
+        ROS_INFO_STREAM( "simul" << " not present. Default value set: " << simul );
+    }
+    else
+        ROS_DEBUG_STREAM( "simul " << simul );
 }

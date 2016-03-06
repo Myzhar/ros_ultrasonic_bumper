@@ -8,5 +8,8 @@
 
      <!-- Serial timeout (msec) [Default 500] -->
      <param name="timeout_msec" value="500"/>
+
+    <!-- Simulation mode [Default false] -->
+    <param name="simul" value="false" />
    </node>   
 </launch>

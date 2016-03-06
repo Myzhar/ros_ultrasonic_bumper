@@ -91,6 +91,6 @@ add_executable(
 
 target_link_libraries(
     ultrasonic_bumper_node
-    ${catkin_LIBRARIES} pthread
+    ${catkin_LIBRARIES}
 )
 #########################################################
