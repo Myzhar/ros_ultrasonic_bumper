@@ -2,6 +2,7 @@
 #include <serial/serial.h>
 #include <stdlib.h>
 #include <string>
+#include <angles/angles.h>
 
 #include <ros_ultrasonic_bumper/ultrasnd_bump_ranges.h>
 
@@ -26,17 +27,20 @@ typedef struct _data_out
 
 // >>>>> Global functions
 void loadParams();
+bool connect_serial();
 // <<<<< Global functions
 
 // >>>>> Global variables
 ros::NodeHandle* nh;
 ros::NodeHandle* nhPriv;
 
-string serial_port;
+string serial_port_name;
 int baudrate;
 int timeout_msec;
 
 bool simul;
+
+serial::Serial serPort;
 // <<<<< Global variables
 
 #define DEFAULT_SER_PORT    "/dev/ttyUSB0"
@@ -79,39 +83,33 @@ int main(int argc, char** argv)
     rangeMsg.sensor_RR.header = headerRR;
     rangeMsg.sensor_RL.header = headerRL;
 
+    rangeMsg.sensor_FL.radiation_type = sensor_msgs::Range::ULTRASOUND;
+    rangeMsg.sensor_FR.radiation_type = sensor_msgs::Range::ULTRASOUND;
+    rangeMsg.sensor_RR.radiation_type = sensor_msgs::Range::ULTRASOUND;
+    rangeMsg.sensor_RL.radiation_type = sensor_msgs::Range::ULTRASOUND;
+
+    rangeMsg.sensor_FL.field_of_view = angles::from_degrees( 30.0f );
+    rangeMsg.sensor_FR.field_of_view = angles::from_degrees( 30.0f );
+    rangeMsg.sensor_RR.field_of_view = angles::from_degrees( 30.0f );
+    rangeMsg.sensor_RL.field_of_view = angles::from_degrees( 30.0f );
+
+    rangeMsg.sensor_FL.min_range = 0.0f;
+    rangeMsg.sensor_FL.max_range = INVALID_REMAP;
+    rangeMsg.sensor_FR.min_range = 0.0f;
+    rangeMsg.sensor_FR.max_range = INVALID_REMAP;
+    rangeMsg.sensor_RR.min_range = 0.0f;
+    rangeMsg.sensor_RR.max_range = INVALID_REMAP;
+    rangeMsg.sensor_RL.min_range = 0.0f;
+    rangeMsg.sensor_RL.max_range = INVALID_REMAP;
+
     static ros::Publisher range_pub = nh->advertise<ultrasnd_bump_ranges>( "ranges", 10, false );
     // <<<<< Output message
 
     // >>>>> Serial driver
-    serial::Serial serial;
+    bool connected = false;
 
     if( !simul )
-    {
-        try
-        {
-            serial.setPort(serial_port);
-            serial.open();
-
-            if(serial.isOpen()){
-                ROS_INFO_STREAM("Serial Port initialized: " << serial_port );
-            }
-            else
-            {
-                ROS_ERROR_STREAM( "Serial port not opened: " << serial_port );
-                return EXIT_FAILURE;
-            }
-
-            serial.setBaudrate(baudrate);
-
-            serial::Timeout to = serial::Timeout::simpleTimeout(timeout_msec);
-            serial.setTimeout(to);
-        }
-        catch (serial::IOException& e)
-        {
-            ROS_ERROR_STREAM("Unable to configure serial port " << serial_port << " - Error: "  << e.what() );
-            return EXIT_FAILURE;
-        }
-    }
+        connected = connect_serial();
 
     string ser_buffer;
 
@@ -119,14 +117,16 @@ int main(int argc, char** argv)
     uint8_t ctrl0_0;
     uint8_t ctrl0_1;
 
+    uint8_t connect_retry = 0;
+
     while( ros::ok() )
     {
-        if( !simul )
+        if( !simul && connected )
         {
-            if( serial.waitReadable() )
+            if( serPort.waitReadable() )
             {
-                int available = serial.available();
-                ser_buffer += serial.read( available );
+                int available = serPort.available();
+                ser_buffer += serPort.read( available );
 
                 // >>>>> Searching for first byte: 0xA5
                 bool found = false;
@@ -186,13 +186,40 @@ int main(int argc, char** argv)
                 ser_buffer.erase( ser_buffer.begin(),
                                   ser_buffer.begin()+ sizeof(DataOut) );
             }
+            else // Distance bypass to not block "twist messages"
+            {
+                ROS_WARN_STREAM( "Serial port " << serial_port_name << " timeout " );
+
+                received.distances[0] = INVALID_REMAP;
+                received.distances[1] = INVALID_REMAP;
+                received.distances[2] = INVALID_REMAP;
+                received.distances[3] = INVALID_REMAP;
+            }
         }
-        else // Data simulation
+        else // Data simulation && Not Connected bypass
         {
-            received.distances[0] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
-            received.distances[1] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
-            received.distances[2] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
-            received.distances[3] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+            if( simul )
+            {
+                received.distances[0] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+                received.distances[1] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+                received.distances[2] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+                received.distances[3] = ((float)std::rand()/RAND_MAX) * INVALID_REMAP;
+            }
+            else
+            {
+                connect_retry++;
+
+                if( connect_retry==20 )
+                {
+                    connected = connect_serial();
+                    connect_retry = 0;
+                }
+
+                received.distances[0] = INVALID_REMAP;
+                received.distances[1] = INVALID_REMAP;
+                received.distances[2] = INVALID_REMAP;
+                received.distances[3] = INVALID_REMAP;
+            }
         }
 
         // >>>>> Output message
@@ -224,7 +251,7 @@ int main(int argc, char** argv)
 
         ros::spinOnce();
 
-        ros::Rate r(100); // 10 hz
+        ros::Rate r(10.0); // 10 hz
         r.sleep();
     }
 
@@ -233,18 +260,48 @@ int main(int argc, char** argv)
     return EXIT_SUCCESS;
 }
 
+bool connect_serial()
+{
+    try
+    {
+        serPort.setPort(serial_port_name);
+        serPort.open();
+
+        if(serPort.isOpen()){
+            ROS_INFO_STREAM("Serial Port initialized: " << serial_port_name );
+        }
+        else
+        {
+            ROS_ERROR_STREAM( "Serial port not opened: " << serial_port_name );
+            return EXIT_FAILURE;
+        }
+
+        serPort.setBaudrate(baudrate);
+
+        serial::Timeout to = serial::Timeout::simpleTimeout(timeout_msec);
+        serPort.setTimeout(to);
+    }
+    catch (serial::IOException& e)
+    {
+        ROS_ERROR_STREAM("Unable to configure serial port " << serial_port_name << " - Error: "  << e.what() );
+        return false;
+    }
+
+    return true;
+}
+
 void loadParams()
 {
     ROS_INFO_STREAM( "Loading parameters from server" );
 
-    if( !nhPriv->getParam( "serial_port", serial_port ) )
+    if( !nhPriv->getParam( "serial_port", serial_port_name ) )
     {
-        serial_port = DEFAULT_SER_PORT;
-        nhPriv->setParam( "serial_port", serial_port );
-        ROS_INFO_STREAM( "serial_port" << " not present. Default value set: " << serial_port );
+        serial_port_name = DEFAULT_SER_PORT;
+        nhPriv->setParam( "serial_port", serial_port_name );
+        ROS_INFO_STREAM( "serial_port" << " not present. Default value set: " << serial_port_name );
     }
     else
-        ROS_DEBUG_STREAM( "serial_port: " << serial_port );
+        ROS_DEBUG_STREAM( "serial_port: " << serial_port_name );
 
     if( !nhPriv->getParam( "baudrate", baudrate ) )
     {
